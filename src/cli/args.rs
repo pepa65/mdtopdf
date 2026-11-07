@@ -3,85 +3,96 @@
 use clap::Parser;
 use std::path::PathBuf;
 
-/// md2pdf - Convert Markdown to PDF using Typst
+use crate::parser::frontmatter::{Margins, parse_margins};
+
+/// mdtopdf - Convert Markdown to PDF with Typst
 #[derive(Parser, Debug)]
-#[command(name = "md2pdf")]
-#[command(author = "md2pdf contributors")]
-#[command(version = "0.1.0")]
-#[command(about = "Convert Markdown to PDF using Typst", long_about = None)]
+#[clap(version, about)]
+#[clap(help_template(
+	"\
+{name} {version} - {about}
+{usage-heading} {usage}
+{all-args}
+"
+))]
 pub struct Args {
-    /// Input markdown file
-    #[arg(value_name = "FILE")]
-    pub input: PathBuf,
+	/// Input markdown file
+	#[arg(value_name = "MD_FILE")]
+	pub input: PathBuf,
 
-    /// Output PDF file (defaults to input name with .pdf extension)
-    #[arg(short, long)]
-    pub output: Option<PathBuf>,
+	/// Output PDF file [default: MD_FILE with .pdf extension]
+	#[arg(short, long, value_name = "PDF_FILE")]
+	pub output: Option<PathBuf>,
 
-    /// Font family to use
-    #[arg(long, default_value = "Inter")]
-    pub font: String,
+	/// Font family to use
+	#[arg(short, long, default_value = "Inter")]
+	pub font: String,
 
-    /// Font size in points
-    #[arg(long, default_value = "11")]
-    pub font_size: u32,
+	/// Font size in points (can be fractional)
+	#[arg(short = 's', long, default_value = "11")]
+	pub font_size: f32,
 
-    /// Paper format (A4, Letter)
-    #[arg(long, default_value = "A4")]
-    pub format: String,
+	/// Paper format (A4/Letter)
+	#[arg(short, long, default_value = "A4")]
+	pub paper: String,
 
-    /// Generation timeout in seconds
-    #[arg(long, default_value = "30")]
-    pub timeout: u32,
+	/// Page margins: `top [right [bottom [left]]] [mm|cm|in|pt]` [default: 16 mm]
+	#[arg(short = 'm', long = "margins", num_args = 1..=5)]
+	pub margins: Option<Vec<String>>,
 
-    /// Generate table of contents
-    #[arg(long)]
-    pub toc: bool,
+	/// Generate Table of Contents
+	#[arg(long)]
+	pub toc: bool,
 
-    /// Generate cover page
-    #[arg(long)]
-    pub cover: bool,
+	/// Header for Table of Contents
+	#[arg(long, default_value = "Table of Contents")]
+	pub toc_header: Option<String>,
 
-    /// Header left text
-    #[arg(long)]
-    pub header_left: Option<String>,
+	/// Generate Cover page
+	#[arg(long)]
+	pub cover: bool,
 
-    /// Header center text
-    #[arg(long)]
-    pub header_center: Option<String>,
+	/// Header Left text
+	#[arg(long)]
+	pub header_left: Option<String>,
 
-    /// Header right text
-    #[arg(long)]
-    pub header_right: Option<String>,
+	/// Header Center text
+	#[arg(long)]
+	pub header_center: Option<String>,
 
-    /// Footer left text
-    #[arg(long)]
-    pub footer_left: Option<String>,
+	/// Header Right text
+	#[arg(long)]
+	pub header_right: Option<String>,
 
-    /// Footer center text
-    #[arg(long)]
-    pub footer_center: Option<String>,
+	/// Footer Left text
+	#[arg(long)]
+	pub footer_left: Option<String>,
 
-    /// Footer right text
-    #[arg(long)]
-    pub footer_right: Option<String>,
+	/// Footer Center text
+	#[arg(long)]
+	pub footer_center: Option<String>,
 
-    /// Disable page numbers
-    #[arg(long)]
-    pub no_page_numbers: bool,
+	/// Footer Right text
+	#[arg(long)]
+	pub footer_right: Option<String>,
 
-    /// Enable verbose output
-    #[arg(short, long)]
-    pub verbose: bool,
+	/// Disable page numbers
+	#[arg(long)]
+	pub no_page_numbers: bool,
+
+	/// Enable verbose output
+	#[arg(short, long)]
+	pub verbose: bool,
 }
 
 impl Args {
-    /// Determine the output path based on input and optional override
-    pub fn get_output_path(&self) -> PathBuf {
-        self.output.clone().unwrap_or_else(|| {
-            let mut path = self.input.clone();
-            path.set_extension("pdf");
-            path
-        })
-    }
+	pub fn margins(&self) -> Result<Option<Margins>, String> {
+		self.margins
+			.as_ref()
+			.map(|values| {
+				let parts: Vec<&str> = values.iter().map(String::as_str).collect();
+				parse_margins(&parts)
+			})
+			.transpose()
+	}
 }

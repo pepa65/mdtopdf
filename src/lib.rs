@@ -1,4 +1,4 @@
-//! md2pdf - Markdown to PDF converter using Typst
+//! mdtopdf - Convert Markdown to PDF with Typst
 //!
 //! This library provides functionality to convert Markdown documents
 //! to PDF using Typst as the rendering engine.

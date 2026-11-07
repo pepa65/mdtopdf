@@ -2,778 +2,739 @@
 
 use anyhow::Result;
 use pulldown_cmark::{Alignment, CodeBlockKind, Event, Tag, TagEnd};
+use tracing::{debug, warn};
 
-use crate::parser::frontmatter::DocumentMetadata;
+use crate::parser::frontmatter::{DocumentMetadata, Margins};
 use crate::parser::markdown::{ParsedDocument, ParsedEvent};
 
 use super::callouts::{self, detect_callout};
 use super::math;
-use super::mermaid::{self, is_mermaid_block, KrokiRenderer};
+use super::mermaid::{self, KrokiRenderer, is_mermaid_block};
 use super::syntax::{CodeBlockInfo, generate_code_block_typst};
 
 use std::path::Path;
 
 /// Builder for constructing Typst markup from markdown events
 pub struct TypstBuilder {
-    /// The accumulated Typst content
-    output: String,
-    /// Current indentation level for lists
-    list_depth: usize,
-    /// Stack of list types (true = ordered, false = unordered)
-    list_stack: Vec<bool>,
-    /// Whether we're currently in a code block
-    in_code_block: bool,
-    /// Current code block language
-    code_block_lang: Option<String>,
-    /// Current code block info string (for title extraction)
-    code_block_info: String,
-    /// Accumulated code block content
-    code_block_content: String,
-    /// Whether we're in a table
-    in_table: bool,
-    /// Current table row content
-    table_row: Vec<String>,
-    /// Table column alignments
-    table_alignments: Vec<Alignment>,
-    /// Whether we're in the table header
-    in_table_head: bool,
-    /// Accumulated text for current link/emphasis
-    text_buffer: String,
-    /// Whether we're collecting text for a link
-    in_link: bool,
-    /// Current link URL
-    link_url: String,
-    /// Whether we're in emphasis
-    in_emphasis: bool,
-    /// Whether we're in strong
-    in_strong: bool,
-    /// Whether we're in strikethrough
-    in_strikethrough: bool,
-    /// Whether we're in a blockquote (for callout detection)
-    in_blockquote: bool,
-    /// Accumulated blockquote content
-    blockquote_content: String,
-    /// Pending table column specification (from [table-columns: ...] directive)
-    pending_table_columns: Option<String>,
-    /// Optional kroki renderer for mermaid diagrams
-    kroki_renderer: Option<KrokiRenderer>,
+	/// The accumulated Typst content
+	output: String,
+	/// Current indentation level for lists
+	list_depth: usize,
+	/// Stack of list types (true = ordered, false = unordered)
+	list_stack: Vec<bool>,
+	/// Whether we're currently in a code block
+	in_code_block: bool,
+	/// Current code block language
+	code_block_lang: Option<String>,
+	/// Current code block info string (for title extraction)
+	code_block_info: String,
+	/// Accumulated code block content
+	code_block_content: String,
+	/// Whether we're in a table
+	in_table: bool,
+	/// Current table row content
+	table_row: Vec<String>,
+	/// Table column alignments
+	table_alignments: Vec<Alignment>,
+	/// Whether we're in the table header
+	in_table_head: bool,
+	/// Accumulated text for current link/emphasis
+	text_buffer: String,
+	/// Whether we're collecting text for a link
+	in_link: bool,
+	/// Current link URL
+	link_url: String,
+	/// Whether we're in emphasis
+	in_emphasis: bool,
+	/// Whether we're in strong
+	in_strong: bool,
+	/// Whether we're in strikethrough
+	in_strikethrough: bool,
+	/// Whether we're in a blockquote (for callout detection)
+	in_blockquote: bool,
+	/// Accumulated blockquote content
+	blockquote_content: String,
+	/// Pending table column specification (from [table-columns: ...] directive)
+	pending_table_columns: Option<String>,
+	/// Optional kroki renderer for mermaid diagrams
+	kroki_renderer: Option<KrokiRenderer>,
 }
 
 impl TypstBuilder {
-    /// Create a new TypstBuilder
-    pub fn new() -> Self {
-        Self {
-            output: String::new(),
-            list_depth: 0,
-            list_stack: Vec::new(),
-            in_code_block: false,
-            code_block_lang: None,
-            code_block_info: String::new(),
-            code_block_content: String::new(),
-            in_table: false,
-            table_row: Vec::new(),
-            table_alignments: Vec::new(),
-            in_table_head: false,
-            text_buffer: String::new(),
-            in_link: false,
-            link_url: String::new(),
-            in_emphasis: false,
-            in_strong: false,
-            in_strikethrough: false,
-            in_blockquote: false,
-            blockquote_content: String::new(),
-            pending_table_columns: None,
-            kroki_renderer: None,
-        }
-    }
+	/// Create a new TypstBuilder
+	pub fn new() -> Self {
+		Self {
+			output: String::new(),
+			list_depth: 0,
+			list_stack: Vec::new(),
+			in_code_block: false,
+			code_block_lang: None,
+			code_block_info: String::new(),
+			code_block_content: String::new(),
+			in_table: false,
+			table_row: Vec::new(),
+			table_alignments: Vec::new(),
+			in_table_head: false,
+			text_buffer: String::new(),
+			in_link: false,
+			link_url: String::new(),
+			in_emphasis: false,
+			in_strong: false,
+			in_strikethrough: false,
+			in_blockquote: false,
+			blockquote_content: String::new(),
+			pending_table_columns: None,
+			kroki_renderer: None,
+		}
+	}
 
-    /// Set the kroki renderer for mermaid diagrams
-    pub fn set_kroki_renderer(&mut self, renderer: KrokiRenderer) {
-        self.kroki_renderer = Some(renderer);
-    }
+	/// Set the kroki renderer for mermaid diagrams
+	pub fn set_kroki_renderer(&mut self, renderer: KrokiRenderer) {
+		self.kroki_renderer = Some(renderer);
+	}
 
-    /// Generate the document preamble with metadata
-    fn generate_preamble(&mut self, metadata: &DocumentMetadata) {
-        // Page setup
-        let paper = metadata
-            .format
-            .as_ref()
-            .map(|s| s.to_lowercase())
-            .unwrap_or_else(|| "a4".to_string());
+	/// Generate the document preamble with metadata
+	fn generate_preamble(&mut self, metadata: &DocumentMetadata) {
+		// Page setup
+		let title = metadata.title.as_deref().unwrap_or("");
 
-        let font = metadata
-            .font
-            .as_ref()
-            .map(|s| s.as_str())
-            .unwrap_or("Linux Libertine");
+		let author = metadata.author.as_deref().unwrap_or("");
 
-        let font_size = metadata.font_size.unwrap_or(11);
+		let paper = metadata.paper.as_ref().map(|s| s.to_lowercase()).unwrap_or_else(|| "a4".to_string());
 
-        self.output.push_str(&format!(
-            r#"// Generated by md2pdf
+		let font = metadata.font.as_deref().unwrap_or("Arial");
+
+		let font_size = metadata.font_size.unwrap_or(11.0);
+
+		let default_margins = Margins { values: [16.0; 4], unit: "mm".to_string() };
+		let margins = metadata.margins.as_ref().unwrap_or(&default_margins);
+		let [top, right, bottom, left] = margins.values;
+		let unit = &margins.unit;
+
+		self.output.push_str(&format!(
+			r#"// Generated by mdtopdf
+#set document(
+  title: [{}],
+  author: ("{}"),
+)
 #set page(
   paper: "{}",
-  margin: (top: 2.5cm, bottom: 2.5cm, left: 2cm, right: 2cm),
+  margin: (top: {}{}, right: {}{}, bottom: {}{}, left: {}{}),
 "#,
-            paper
-        ));
+			title, author, paper, top, unit, right, unit, bottom, unit, left, unit,
+		));
 
-        // Header configuration
-        let has_header = metadata.header_left.is_some()
-            || metadata.header_center.is_some()
-            || metadata.header_right.is_some();
+		// Header configuration
+		let has_header = metadata.header_left.is_some() || metadata.header_center.is_some() || metadata.header_right.is_some();
 
-        if has_header {
-            self.output.push_str("  header: {\n");
-            self.output.push_str("    grid(\n");
-            self.output.push_str("      columns: (1fr, 1fr, 1fr),\n");
-            self.output.push_str(&format!(
-                "      align(left)[{}],\n",
-                metadata.header_left.as_deref().unwrap_or("")
-            ));
-            self.output.push_str(&format!(
-                "      align(center)[{}],\n",
-                metadata.header_center.as_deref().unwrap_or("")
-            ));
-            self.output.push_str(&format!(
-                "      align(right)[{}],\n",
-                metadata.header_right.as_deref().unwrap_or("")
-            ));
-            self.output.push_str("    )\n");
-            self.output.push_str("  },\n");
-        }
+		if has_header {
+			self.output.push_str("  header: {\n");
+			self.output.push_str("    grid(\n");
+			self.output.push_str("      columns: (1fr, 1fr, 1fr),\n");
+			self.output.push_str(&format!("      align(left)[{}],\n", metadata.header_left.as_deref().unwrap_or("")));
+			self.output.push_str(&format!("      align(center)[{}],\n", metadata.header_center.as_deref().unwrap_or("")));
+			self.output.push_str(&format!("      align(right)[{}],\n", metadata.header_right.as_deref().unwrap_or("")));
+			self.output.push_str("    )\n");
+			self.output.push_str("  },\n");
+		}
 
-        // Footer configuration
-        let show_page_numbers = metadata.page_numbers.unwrap_or(true);
-        let has_footer = metadata.footer_left.is_some()
-            || metadata.footer_center.is_some()
-            || metadata.footer_right.is_some()
-            || show_page_numbers;
+		// Footer configuration
+		let show_page_numbers = metadata.page_numbers.unwrap_or(true);
+		let has_footer = metadata.footer_left.is_some() || metadata.footer_center.is_some() || metadata.footer_right.is_some() || show_page_numbers;
 
-        if has_footer {
-            self.output.push_str("  footer: {\n");
-            self.output.push_str("    grid(\n");
-            self.output.push_str("      columns: (1fr, 1fr, 1fr),\n");
-            self.output.push_str(&format!(
-                "      align(left)[{}],\n",
-                metadata.footer_left.as_deref().unwrap_or("")
-            ));
-            self.output.push_str(&format!(
-                "      align(center)[{}],\n",
-                metadata.footer_center.as_deref().unwrap_or("")
-            ));
+		if has_footer {
+			self.output.push_str("  footer: {\n");
+			self.output.push_str("    grid(\n");
+			self.output.push_str("      columns: (1fr, 1fr, 1fr),\n");
+			self.output.push_str(&format!("      align(left)[{}],\n", metadata.footer_left.as_deref().unwrap_or("")));
+			self.output.push_str(&format!("      align(center)[{}],\n", metadata.footer_center.as_deref().unwrap_or("")));
 
-            if show_page_numbers {
-                self.output
-                    .push_str("      align(right)[#context counter(page).display()],\n");
-            } else {
-                self.output.push_str(&format!(
-                    "      align(right)[{}],\n",
-                    metadata.footer_right.as_deref().unwrap_or("")
-                ));
-            }
+			if show_page_numbers {
+				self.output.push_str("      align(right)[#context counter(page).display()],\n");
+			} else {
+				self.output.push_str(&format!("      align(right)[{}],\n", metadata.footer_right.as_deref().unwrap_or("")));
+			}
 
-            self.output.push_str("    )\n");
-            self.output.push_str("  },\n");
-        }
+			self.output.push_str("    )\n");
+			self.output.push_str("  },\n");
+		}
 
-        self.output.push_str(")\n\n");
+		self.output.push_str(")\n\n");
 
-        // Typography setup
-        self.output.push_str(&format!(
-            r#"#set text(font: "{}", size: {}pt)
+		// Typography setup
+		self.output.push_str(&format!(
+			r#"#set text(font: "{}", size: {}pt)
 #set heading(numbering: none)
 #set par(justify: true)
 
 "#,
-            font, font_size
-        ));
+			font, font_size
+		));
 
-        // Cover page
-        if metadata.cover.unwrap_or(false) {
-            if let Some(ref title) = metadata.title {
-                self.output.push_str("#align(center + horizon)[\n");
-                self.output
-                    .push_str(&format!("  #text(size: 2em, weight: \"bold\")[{}]\n", title));
+		// Cover page
+		if metadata.cover.unwrap_or(false)
+			&& let Some(ref title) = metadata.title
+		{
+			self.output.push_str("#align(center + horizon)[\n");
+			self.output.push_str(&format!("  #text(size: 2em, weight: \"bold\")[{}]\n", title));
 
-                if let Some(ref subtitle) = metadata.subtitle {
-                    self.output.push_str("  #v(0.5em)\n");
-                    self.output
-                        .push_str(&format!("  #text(size: 1.4em)[{}]\n", subtitle));
-                }
+			if let Some(ref subtitle) = metadata.subtitle {
+				self.output.push_str("  #v(0.5em)\n");
+				self.output.push_str(&format!("  #text(size: 1.4em)[{}]\n", subtitle));
+			}
 
-                self.output.push_str("  #v(2em)\n");
+			self.output.push_str("  #v(2em)\n");
 
-                if let Some(ref author) = metadata.author {
-                    self.output.push_str(&format!("  #text[{}]\n", author));
-                }
-                if let Some(ref date) = metadata.date {
-                    self.output.push_str("  #v(0.3em)\n");
-                    self.output.push_str(&format!("  #text[{}]\n", date));
-                }
-                if let Some(ref org) = metadata.organization {
-                    self.output.push_str("  #v(0.3em)\n");
-                    self.output.push_str(&format!("  #text[{}]\n", org));
-                }
+			if let Some(ref author) = metadata.author {
+				self.output.push_str(&format!("  #text[{}]\n", author));
+			}
+			if let Some(ref date) = metadata.date {
+				self.output.push_str("  #v(0.3em)\n");
+				self.output.push_str(&format!("  #text[{}]\n", date));
+			}
+			if let Some(ref org) = metadata.organization {
+				self.output.push_str("  #v(0.3em)\n");
+				self.output.push_str(&format!("  #text[{}]\n", org));
+			}
 
-                self.output.push_str("]\n");
-                self.output.push_str("#pagebreak()\n\n");
-            }
-        }
+			self.output.push_str("]\n");
+			self.output.push_str("#pagebreak()\n\n");
+		}
 
-        // Table of contents
-        if metadata.toc.unwrap_or(false) {
-            self.output
-                .push_str("#outline(title: \"Table of Contents\", indent: auto)\n");
-            self.output.push_str("#pagebreak()\n\n");
-        }
+		// Table of contents
+		if metadata.toc.unwrap_or(false) {
+			let header = metadata.toc_header.clone().unwrap();
+			self.output.push_str(&format!("#outline(title: {:?}, indent: auto)\n", header));
+			self.output.push_str("#pagebreak()\n\n");
+		}
 
-        // Add callout helper function
-        self.output.push_str(callouts::callout_preamble());
-    }
+		// Add callout helper function
+		self.output.push_str(callouts::callout_preamble());
+	}
 
-    /// Process a markdown event
-    fn process_event(&mut self, event: &Event<'static>) {
-        match event {
-            Event::Start(tag) => self.process_start_tag(tag),
-            Event::End(tag) => self.process_end_tag(tag),
-            Event::Text(text) => self.process_text(text),
-            Event::Code(code) => self.process_inline_code(code),
-            Event::Html(html) => self.process_html(html),
-            Event::InlineHtml(html) => self.process_html(html),
-            Event::SoftBreak => self.output.push(' '),
-            Event::HardBreak => self.output.push_str("\\\n"),
-            Event::Rule => self.output.push_str("#line(length: 100%)\n\n"),
-            Event::TaskListMarker(checked) => self.process_task_marker(*checked),
-            Event::FootnoteReference(label) => {
-                self.output.push_str(&format!("#footnote[{}]", label));
-            }
-        }
-    }
+	/// Process a markdown event
+	fn process_event(&mut self, event: &Event<'static>) {
+		match event {
+			Event::Start(tag) => self.process_start_tag(tag),
+			Event::End(tag) => self.process_end_tag(tag),
+			Event::Text(text) => self.process_text(text),
+			Event::Code(code) => self.process_inline_code(code),
+			Event::InlineMath(math) => {
+				self.output.push('$');
+				self.output.push_str(math);
+				self.output.push('$');
+			}
+			Event::DisplayMath(math) => {
+				self.output.push_str("$ ");
+				self.output.push_str(math);
+				self.output.push_str(" $\n\n");
+			}
+			Event::Html(html) => self.process_html(html),
+			Event::InlineHtml(html) => self.process_html(html),
+			Event::SoftBreak => self.output.push(' '),
+			Event::HardBreak => self.output.push_str("\\\n"),
+			Event::Rule => self.output.push_str("#line(length: 100%)\n\n"),
+			Event::TaskListMarker(checked) => self.process_task_marker(*checked),
+			Event::FootnoteReference(label) => {
+				self.output.push_str(&format!("#footnote[{}]", label));
+			}
+		}
+	}
 
-    /// Process a start tag
-    fn process_start_tag(&mut self, tag: &Tag<'static>) {
-        match tag {
-            Tag::Paragraph => {
-                // Paragraphs are implicit in Typst
-            }
-            Tag::Heading { level, .. } => {
-                let prefix = "=".repeat(*level as usize);
-                self.output.push_str(&format!("{} ", prefix));
-            }
-            Tag::BlockQuote => {
-                self.in_blockquote = true;
-                self.blockquote_content.clear();
-            }
-            Tag::CodeBlock(kind) => {
-                self.in_code_block = true;
-                self.code_block_content.clear();
-                match kind {
-                    CodeBlockKind::Fenced(info) => {
-                        self.code_block_info = info.to_string();
-                        let lang = info.split_whitespace().next().unwrap_or("");
-                        if lang.is_empty() {
-                            self.code_block_lang = None;
-                        } else {
-                            self.code_block_lang = Some(lang.to_string());
-                        }
-                    }
-                    CodeBlockKind::Indented => {
-                        self.code_block_info.clear();
-                        self.code_block_lang = None;
-                    }
-                };
-            }
-            Tag::List(start) => {
-                self.list_stack.push(start.is_some());
-                self.list_depth += 1;
-            }
-            Tag::Item => {
-                let indent = "  ".repeat(self.list_depth.saturating_sub(1));
-                let marker = if *self.list_stack.last().unwrap_or(&false) {
-                    "+"
-                } else {
-                    "-"
-                };
-                self.output.push_str(&format!("{}{} ", indent, marker));
-            }
-            Tag::Table(alignments) => {
-                self.in_table = true;
-                self.table_alignments = alignments.clone();
-                self.output.push_str("#table(\n");
+	/// Process a start tag
+	fn process_start_tag(&mut self, tag: &Tag<'static>) {
+		match tag {
+			Tag::Paragraph => {
+				// Paragraphs are implicit in Typst
+			}
+			Tag::Heading { level, .. } => {
+				let prefix = "=".repeat(*level as usize);
+				self.output.push_str(&format!("{} ", prefix));
+			}
+			Tag::BlockQuote(_) => {
+				self.in_blockquote = true;
+				self.blockquote_content.clear();
+			}
+			Tag::CodeBlock(kind) => {
+				self.in_code_block = true;
+				self.code_block_content.clear();
+				match kind {
+					CodeBlockKind::Fenced(info) => {
+						self.code_block_info = info.to_string();
+						let lang = info.split_whitespace().next().unwrap_or("");
+						if lang.is_empty() {
+							self.code_block_lang = None;
+						} else {
+							self.code_block_lang = Some(lang.to_string());
+						}
+					}
+					CodeBlockKind::Indented => {
+						self.code_block_info.clear();
+						self.code_block_lang = None;
+					}
+				};
+			}
+			Tag::List(start) => {
+				self.list_stack.push(start.is_some());
+				self.list_depth += 1;
+			}
+			Tag::Item => {
+				let indent = "  ".repeat(self.list_depth.saturating_sub(1));
+				let marker = if *self.list_stack.last().unwrap_or(&false) { "+" } else { "-" };
+				self.output.push_str(&format!("{}{} ", indent, marker));
+			}
+			Tag::Table(alignments) => {
+				self.in_table = true;
+				self.table_alignments = alignments.clone();
+				self.output.push_str("#table(\n");
 
-                // Use pending column widths if set, otherwise default to column count
-                if let Some(ref cols) = self.pending_table_columns {
-                    self.output
-                        .push_str(&format!("  columns: ({}),\n", cols));
-                    self.pending_table_columns = None; // Consume the directive
-                } else {
-                    self.output
-                        .push_str(&format!("  columns: {},\n", alignments.len()));
-                }
+				// Use pending column widths if set, otherwise default to column count
+				if let Some(ref cols) = self.pending_table_columns {
+					self.output.push_str(&format!("  columns: ({}),\n", cols));
+					self.pending_table_columns = None; // Consume the directive
+				} else {
+					self.output.push_str(&format!("  columns: {},\n", alignments.len()));
+				}
 
-                // Add alignment configuration
-                let aligns: Vec<&str> = alignments
-                    .iter()
-                    .map(|a| match a {
-                        Alignment::None => "auto",
-                        Alignment::Left => "left",
-                        Alignment::Center => "center",
-                        Alignment::Right => "right",
-                    })
-                    .collect();
-                self.output
-                    .push_str(&format!("  align: ({}),\n", aligns.join(", ")));
-            }
-            Tag::TableHead => {
-                self.in_table_head = true;
-            }
-            Tag::TableRow => {
-                self.table_row.clear();
-            }
-            Tag::TableCell => {
-                self.text_buffer.clear();
-            }
-            Tag::Emphasis => {
-                self.in_emphasis = true;
-            }
-            Tag::Strong => {
-                self.in_strong = true;
-            }
-            Tag::Strikethrough => {
-                self.in_strikethrough = true;
-            }
-            Tag::Link { dest_url, .. } => {
-                self.in_link = true;
-                self.link_url = dest_url.to_string();
-                self.text_buffer.clear();
-            }
-            Tag::Image {
-                dest_url, title, ..
-            } => {
-                let caption = if title.is_empty() { "" } else { title.as_ref() };
-                self.output.push_str(&format!(
-                    "#figure(image(\"{}\"), caption: [{}])\n",
-                    dest_url,
-                    caption
-                ));
-            }
-            _ => {}
-        }
-    }
+				// Add alignment configuration
+				let aligns: Vec<&str> = alignments
+					.iter()
+					.map(|a| match a {
+						Alignment::None => "auto",
+						Alignment::Left => "left",
+						Alignment::Center => "center",
+						Alignment::Right => "right",
+					})
+					.collect();
+				self.output.push_str(&format!("  align: ({}),\n", aligns.join(", ")));
+			}
+			Tag::TableHead => {
+				self.in_table_head = true;
+			}
+			Tag::TableRow => {
+				self.table_row.clear();
+			}
+			Tag::TableCell => {
+				self.text_buffer.clear();
+			}
+			Tag::Emphasis => {
+				self.in_emphasis = true;
+			}
+			Tag::Strong => {
+				self.in_strong = true;
+			}
+			Tag::Strikethrough => {
+				self.in_strikethrough = true;
+			}
+			Tag::Link { dest_url, .. } => {
+				self.in_link = true;
+				self.link_url = dest_url.to_string();
+				self.text_buffer.clear();
+			}
+			Tag::Image { dest_url, title, .. } => {
+				let caption = if title.is_empty() { "" } else { title.as_ref() };
+				self.output.push_str(&format!("#figure(image(\"{}\"), caption: [{}])\n", dest_url, caption));
+			}
+			_ => {}
+		}
+	}
 
-    /// Process an end tag
-    fn process_end_tag(&mut self, tag: &TagEnd) {
-        match tag {
-            TagEnd::Paragraph => {
-                self.output.push_str("\n\n");
-            }
-            TagEnd::Heading(_) => {
-                self.output.push('\n');
-            }
-            TagEnd::BlockQuote => {
-                self.in_blockquote = false;
-                let content = std::mem::take(&mut self.blockquote_content);
+	/// Process an end tag
+	fn process_end_tag(&mut self, tag: &TagEnd) {
+		match tag {
+			TagEnd::Paragraph => {
+				self.output.push_str("\n\n");
+			}
+			TagEnd::Heading(_) => {
+				self.output.push('\n');
+			}
+			TagEnd::BlockQuote(_) => {
+				self.in_blockquote = false;
+				let content = std::mem::take(&mut self.blockquote_content);
 
-                // Check if this is a callout
-                if let Some(callout_info) = detect_callout(&content) {
-                    self.output
-                        .push_str(&callouts::generate_callout_typst(&callout_info));
-                } else {
-                    // Regular blockquote
-                    self.output.push_str("#quote(block: true)[\n");
-                    self.output.push_str(&content);
-                    self.output.push_str("]\n\n");
-                }
-            }
-            TagEnd::CodeBlock => {
-                self.in_code_block = false;
-                let lang = self.code_block_lang.take();
-                let info = std::mem::take(&mut self.code_block_info);
-                let content = std::mem::take(&mut self.code_block_content);
+				// Check if this is a callout
+				if let Some(callout_info) = detect_callout(&content) {
+					self.output.push_str(&callouts::generate_callout_typst(&callout_info));
+				} else {
+					// Regular blockquote
+					self.output.push_str("#quote(block: true)[\n");
+					self.output.push_str(&content);
+					self.output.push_str("]\n\n");
+				}
+			}
+			TagEnd::CodeBlock => {
+				self.in_code_block = false;
+				let lang = self.code_block_lang.take();
+				let info = std::mem::take(&mut self.code_block_info);
+				let content = std::mem::take(&mut self.code_block_content);
 
-                // Check if this is a mermaid block
-                if let Some(ref lang_str) = lang {
-                    if is_mermaid_block(lang_str) {
-                        // Try to render via kroki.io if renderer is available
-                        if let Some(ref renderer) = self.kroki_renderer {
-                            match renderer.render(&content) {
-                                Ok(svg_path) => {
-                                    // Use relative path .mermaid/<filename> for Typst
-                                    let filename = svg_path
-                                        .file_name()
-                                        .map(|n| n.to_string_lossy().to_string())
-                                        .unwrap_or_else(|| "mermaid.svg".to_string());
-                                    let relative_path = format!(".mermaid/{}", filename);
-                                    self.output
-                                        .push_str(&mermaid::generate_image_typst(&relative_path));
-                                    return;
-                                }
-                                Err(e) => {
-                                    // Log error and show fallback
-                                    tracing::warn!("Failed to render mermaid via kroki: {}", e);
-                                    self.output.push_str(&mermaid::generate_fallback_typst(
-                                        &content,
-                                        &e.to_string(),
-                                    ));
-                                    return;
-                                }
-                            }
-                        }
+				// Check if this is a mermaid block
+				if let Some(ref lang_str) = lang
+					&& is_mermaid_block(lang_str)
+				{
+					// Try to render via kroki.io if renderer is available
+					if let Some(ref renderer) = self.kroki_renderer {
+						match renderer.render(&content) {
+							Ok(svg_path) => {
+								// Use relative path .mermaid/<filename> for Typst
+								let filename = svg_path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "mermaid.svg".to_string());
+								let relative_path = format!(".mermaid/{}", filename);
+								self.output.push_str(&mermaid::generate_image_typst(&relative_path));
+								return;
+							}
+							Err(e) => {
+								// Log error and show fallback
+								warn!("Failed to render mermaid via kroki: {}", e);
+								self.output.push_str(&mermaid::generate_fallback_typst(&content, &e.to_string()));
+								return;
+							}
+						}
+					}
 
-                        // No renderer available - show fallback
-                        self.output.push_str(&mermaid::generate_fallback_typst(
-                            &content,
-                            "kroki renderer not configured",
-                        ));
-                        return;
-                    }
-                }
+					// No renderer available - show fallback
+					self.output.push_str(&mermaid::generate_fallback_typst(&content, "kroki renderer not configured"));
+					return;
+				}
 
-                // Use styled code block with title support
-                let code_info = CodeBlockInfo::parse(&info, &content);
-                self.output.push_str(&generate_code_block_typst(&code_info));
-            }
-            TagEnd::List(_) => {
-                self.list_stack.pop();
-                self.list_depth = self.list_depth.saturating_sub(1);
-                if self.list_depth == 0 {
-                    self.output.push('\n');
-                }
-            }
-            TagEnd::Item => {
-                self.output.push('\n');
-            }
-            TagEnd::Table => {
-                self.in_table = false;
-                self.output.push_str(")\n\n");
-            }
-            TagEnd::TableHead => {
-                self.in_table_head = false;
-            }
-            TagEnd::TableRow => {
-                // Output the collected row cells
-                for cell in &self.table_row {
-                    if self.in_table_head {
-                        self.output
-                            .push_str(&format!("  table.header[{}],\n", cell));
-                    } else {
-                        self.output.push_str(&format!("  [{}],\n", cell));
-                    }
-                }
-            }
-            TagEnd::TableCell => {
-                self.table_row.push(std::mem::take(&mut self.text_buffer));
-            }
-            TagEnd::Emphasis => {
-                self.in_emphasis = false;
-            }
-            TagEnd::Strong => {
-                self.in_strong = false;
-            }
-            TagEnd::Strikethrough => {
-                self.in_strikethrough = false;
-            }
-            TagEnd::Link => {
-                let url = std::mem::take(&mut self.link_url);
-                let text = std::mem::take(&mut self.text_buffer);
-                self.in_link = false;
-                self.output.push_str(&format!("#link(\"{}\")[{}]", url, text));
-            }
-            _ => {}
-        }
-    }
+				// Use styled code block with title support
+				let code_info = CodeBlockInfo::parse(&info, &content);
+				self.output.push_str(&generate_code_block_typst(&code_info));
+			}
+			TagEnd::List(_) => {
+				self.list_stack.pop();
+				self.list_depth = self.list_depth.saturating_sub(1);
+				if self.list_depth == 0 {
+					self.output.push('\n');
+				}
+			}
+			TagEnd::Item => {
+				self.output.push('\n');
+			}
+			TagEnd::Table => {
+				self.in_table = false;
+				self.output.push_str(")\n\n");
+			}
+			TagEnd::TableHead => {
+				self.in_table_head = false;
+			}
+			TagEnd::TableRow => {
+				// Output the collected row cells
+				for cell in &self.table_row {
+					if self.in_table_head {
+						self.output.push_str(&format!("  table.header[{}],\n", cell));
+					} else {
+						self.output.push_str(&format!("  [{}],\n", cell));
+					}
+				}
+			}
+			TagEnd::TableCell => {
+				self.table_row.push(std::mem::take(&mut self.text_buffer));
+			}
+			TagEnd::Emphasis => {
+				self.in_emphasis = false;
+			}
+			TagEnd::Strong => {
+				self.in_strong = false;
+			}
+			TagEnd::Strikethrough => {
+				self.in_strikethrough = false;
+			}
+			TagEnd::Link => {
+				let url = std::mem::take(&mut self.link_url);
+				let text = std::mem::take(&mut self.text_buffer);
+				self.in_link = false;
+				self.output.push_str(&format!("#link(\"{}\")[{}]", url, text));
+			}
+			_ => {}
+		}
+	}
 
-    /// Process text content
-    fn process_text(&mut self, text: &str) {
-        if self.in_code_block {
-            self.code_block_content.push_str(text);
-            return;
-        }
+	/// Process text content
+	fn process_text(&mut self, text: &str) {
+		if self.in_code_block {
+			self.code_block_content.push_str(text);
+			return;
+		}
 
-        // Escape special Typst characters
-        let escaped = escape_typst_text(text);
+		// Escape special Typst characters
+		let escaped = escape_typst_text(text);
 
-        // Apply formatting
-        let formatted = if self.in_strong && self.in_emphasis {
-            format!("_*{}*_", escaped)
-        } else if self.in_strong {
-            format!("*{}*", escaped)
-        } else if self.in_emphasis {
-            format!("_{}_", escaped)
-        } else if self.in_strikethrough {
-            format!("#strike[{}]", escaped)
-        } else {
-            escaped
-        };
+		// Apply formatting
+		let formatted = if self.in_strong && self.in_emphasis {
+			format!("_*{}*_", escaped)
+		} else if self.in_strong {
+			format!("*{}*", escaped)
+		} else if self.in_emphasis {
+			format!("_{}_", escaped)
+		} else if self.in_strikethrough {
+			format!("#strike[{}]", escaped)
+		} else {
+			escaped
+		};
 
-        if self.in_blockquote {
-            self.blockquote_content.push_str(&formatted);
-        } else if self.in_link || self.in_table {
-            self.text_buffer.push_str(&formatted);
-        } else {
-            self.output.push_str(&formatted);
-        }
-    }
+		if self.in_blockquote {
+			self.blockquote_content.push_str(&formatted);
+		} else if self.in_link || self.in_table {
+			self.text_buffer.push_str(&formatted);
+		} else {
+			self.output.push_str(&formatted);
+		}
+	}
 
-    /// Process inline code
-    fn process_inline_code(&mut self, code: &str) {
-        let escaped = code.replace('`', "\\`");
-        if self.in_link || self.in_table {
-            self.text_buffer.push_str(&format!("`{}`", escaped));
-        } else {
-            self.output.push_str(&format!("`{}`", escaped));
-        }
-    }
+	/// Process inline code
+	fn process_inline_code(&mut self, code: &str) {
+		let escaped = code.replace('`', "\\`");
+		if self.in_link || self.in_table {
+			self.text_buffer.push_str(&format!("`{}`", escaped));
+		} else {
+			self.output.push_str(&format!("`{}`", escaped));
+		}
+	}
 
-    /// Process inline math ($...$)
-    fn process_inline_math(&mut self, math: &str) {
-        self.output.push_str(&format!("${}$", math));
-    }
+	/// Process HTML (currently just as a comment)
+	fn process_html(&mut self, html: &str) {
+		// Convert HTML to a Typst comment for now
+		self.output.push_str(&format!("// HTML: {}\n", html.trim()));
+	}
 
-    /// Process display math ($$...$$)
-    fn process_display_math(&mut self, math: &str) {
-        self.output.push_str(&format!("$ {} $\n\n", math));
-    }
+	/// Process task list marker
+	fn process_task_marker(&mut self, checked: bool) {
+		if checked {
+			self.output.push_str("#box(stroke: 0.5pt, width: 0.8em, height: 0.8em)[#align(center)[#text(size: 0.6em)[X]]] ");
+		} else {
+			self.output.push_str("#box(stroke: 0.5pt, width: 0.8em, height: 0.8em)[] ");
+		}
+	}
 
-    /// Process HTML (currently just as a comment)
-    fn process_html(&mut self, html: &str) {
-        // Convert HTML to a Typst comment for now
-        self.output
-            .push_str(&format!("// HTML: {}\n", html.trim()));
-    }
+	/// Get the final output
+	pub fn finish(self) -> String {
+		self.output
+	}
+}
 
-    /// Process task list marker
-    fn process_task_marker(&mut self, checked: bool) {
-        if checked {
-            self.output.push_str("#box(stroke: 0.5pt, width: 0.8em, height: 0.8em)[#align(center)[#text(size: 0.6em)[X]]] ");
-        } else {
-            self.output
-                .push_str("#box(stroke: 0.5pt, width: 0.8em, height: 0.8em)[] ");
-        }
-    }
-
-    /// Get the final output
-    pub fn finish(self) -> String {
-        self.output
-    }
+impl Default for TypstBuilder {
+	fn default() -> Self {
+		Self::new()
+	}
 }
 
 /// Escape special Typst characters in text
 fn escape_typst_text(text: &str) -> String {
-    let mut result = String::with_capacity(text.len());
+	let mut result = String::with_capacity(text.len());
 
-    for ch in text.chars() {
-        match ch {
-            '#' => result.push_str("\\#"),
-            // Don't escape $ - it's used for math mode in Typst
-            // '$' => result.push_str("\\$"),
-            '@' => result.push_str("\\@"),
-            '<' => result.push_str("\\<"),
-            '>' => result.push_str("\\>"),
-            // Don't escape backslash - it's used in math/LaTeX expressions
-            // '\\' => result.push_str("\\\\"),
-            _ => result.push(ch),
-        }
-    }
+	for ch in text.chars() {
+		match ch {
+			'#' => result.push_str("\\#"),
+			// Don't escape $ - it's used for math mode in Typst
+			// '$' => result.push_str("\\$"),
+			'@' => result.push_str("\\@"),
+			'<' => result.push_str("\\<"),
+			'>' => result.push_str("\\>"),
+			// Don't escape backslash - it's used in math/LaTeX expressions
+			// '\\' => result.push_str("\\\\"),
+			_ => result.push(ch),
+		}
+	}
 
-    result
+	result
 }
 
-/// Convert a parsed markdown document to Typst markup
+#[cfg(test)]
 pub fn convert_to_typst(doc: &ParsedDocument, metadata: &DocumentMetadata) -> Result<String> {
-    convert_to_typst_with_cache(doc, metadata, None)
+	convert_to_typst_with_cache(doc, metadata, None)
 }
 
 /// Convert a parsed markdown document to Typst markup with optional mermaid cache directory
-pub fn convert_to_typst_with_cache(
-    doc: &ParsedDocument,
-    metadata: &DocumentMetadata,
-    mermaid_cache_dir: Option<&Path>,
-) -> Result<String> {
-    let mut builder = TypstBuilder::new();
+pub fn convert_to_typst_with_cache(doc: &ParsedDocument, metadata: &DocumentMetadata, mermaid_cache_dir: Option<&Path>) -> Result<String> {
+	let mut builder = TypstBuilder::new();
 
-    // Set up kroki renderer for mermaid diagrams if cache dir provided
-    if let Some(cache_dir) = mermaid_cache_dir {
-        match KrokiRenderer::new(cache_dir.to_path_buf()) {
-            Ok(renderer) => {
-                builder.set_kroki_renderer(renderer);
-                tracing::info!("Initialized kroki renderer for mermaid diagrams");
-            }
-            Err(e) => {
-                tracing::warn!("Failed to initialize kroki renderer: {}", e);
-            }
-        }
-    }
+	// Set up kroki renderer for mermaid diagrams if cache dir provided
+	if let Some(cache_dir) = mermaid_cache_dir {
+		match KrokiRenderer::new(cache_dir.to_path_buf()) {
+			Ok(renderer) => {
+				builder.set_kroki_renderer(renderer);
+				debug!("Initialized kroki renderer for mermaid diagrams");
+			}
+			Err(e) => {
+				warn!("Failed to initialize kroki renderer: {}", e);
+			}
+		}
+	}
 
-    // Generate preamble with metadata
-    builder.generate_preamble(metadata);
+	// Generate preamble with metadata
+	builder.generate_preamble(metadata);
 
-    // Process all events
-    for event in &doc.events {
-        match event {
-            ParsedEvent::Markdown(md_event) => {
-                builder.process_event(md_event);
-            }
-            ParsedEvent::Directive(directive) => {
-                // Handle TableColumns specially - store for next table
-                if let Some(cols) = directive.table_columns() {
-                    builder.pending_table_columns = Some(cols.to_string());
-                } else {
-                    builder.output.push_str(&directive.to_typst());
-                    builder.output.push('\n');
-                }
-            }
-        }
-    }
+	// Process all events
+	for event in &doc.events {
+		match event {
+			ParsedEvent::Markdown(md_event) => {
+				builder.process_event(md_event);
+			}
+			ParsedEvent::Directive(directive) => {
+				// Handle TableColumns specially - store for next table
+				if let Some(cols) = directive.table_columns() {
+					builder.pending_table_columns = Some(cols.to_string());
+				} else {
+					builder.output.push_str(&directive.to_typst());
+					builder.output.push('\n');
+				}
+			}
+		}
+	}
 
-    // Post-process to handle directives that weren't caught by markdown parser
-    let output = builder.finish();
-    let output = postprocess_directives(&output);
+	// Post-process to handle directives that weren't caught by markdown parser
+	let output = builder.finish();
+	let output = postprocess_directives(&output);
 
-    Ok(output)
+	Ok(output)
 }
 
 /// Post-process the Typst output to handle directive patterns that were missed
 fn postprocess_directives(content: &str) -> String {
-    use regex::Regex;
+	use regex::Regex;
 
-    let mut result = content.to_string();
+	let mut result = content.to_string();
 
-    // Replace standalone directive patterns that weren't processed
-    let replacements = [
-        // Page breaks
-        (r"\[page-break\]", "#pagebreak()"),
-        (r"\[pagebreak\]", "#pagebreak()"),
-        (r"\[page-break-before\]", "#pagebreak()"),
-        (r"\[page-break-after\]", ""), // Just remove, handled by context
-        // Columns - start
-        (r"\[columns-2\]", "#columns(2)["),
-        (r"\[columns-3\]", "#columns(3)["),
-        (r"\[columns-4\]", "#columns(4)["),
-        // Columns - end (various forms)
-        (r"\[/columns-2\]", "]"),
-        (r"\[/columns-3\]", "]"),
-        (r"\[/columns-4\]", "]"),
-        (r"\[/columns\]", "]"),
-        // Keep together - these need special handling
-        // For now, just remove them to avoid unclosed brackets
-        (r"\[keep-together\]", ""),
-        (r"\[/keep-together\]", ""),
-        (r"\[no-break\]", ""),
-        (r"\[/no-break\]", ""),
-    ];
+	// Replace standalone directive patterns that weren't processed
+	let replacements = [
+		// Page breaks
+		(r"\[page-break\]", "#pagebreak()"),
+		(r"\[pagebreak\]", "#pagebreak()"),
+		(r"\[page-break-before\]", "#pagebreak()"),
+		(r"\[page-break-after\]", ""), // Just remove, handled by context
+		// Line breaks (justified)
+		(r"\[line-break\]", "#linebreak()"),
+		(r"\[linebreak\]", "#linebreak()"),
+		(r"\[break\]", "#linebreak()"),
+		(r"\[cr\]", "#linebreak()"),
+		(r"\[nl\]", "#linebreak()"),
+		// Columns - start
+		(r"\[columns-2\]", "#columns(2)["),
+		(r"\[columns-3\]", "#columns(3)["),
+		(r"\[columns-4\]", "#columns(4)["),
+		// Columns - end (various forms)
+		(r"\[/columns-2\]", "]"),
+		(r"\[/columns-3\]", "]"),
+		(r"\[/columns-4\]", "]"),
+		(r"\[/columns\]", "]"),
+		// Keep together - these need special handling
+		// For now, just remove them to avoid unclosed brackets
+		(r"\[keep-together\]", ""),
+		(r"\[/keep-together\]", ""),
+		(r"\[no-break\]", ""),
+		(r"\[/no-break\]", ""),
+	];
 
-    for (pattern, replacement) in replacements {
-        if let Ok(re) = Regex::new(&format!(r"(?i){}", pattern)) {
-            result = re.replace_all(&result, replacement).to_string();
-        }
-    }
+	for (pattern, replacement) in replacements {
+		if let Ok(re) = Regex::new(&format!(r"(?i){}", pattern)) {
+			result = re.replace_all(&result, replacement).to_string();
+		}
+	}
 
-    // Handle LaTeX math expressions with proper conversion
-    // First, process display math ($$...$$) - must be done before inline math
-    result = math::process_display_math(&result).into_owned();
+	// Handle LaTeX math expressions with proper conversion
+	// First, process display math ($$...$$) - must be done before inline math
+	result = math::process_display_math(&result).into_owned();
 
-    // Then process inline math ($...$)
-    result = math::process_inline_math(&result).into_owned();
+	// Then process inline math ($...$)
+	result = math::process_inline_math(&result).into_owned();
 
-    // Handle table-columns directive: [table-columns: X] followed by #table(
-    // This finds the directive, captures the column spec, and applies it to the next table
-    if let Ok(re) = Regex::new(r"(?i)\[table-columns?:\s*([^\]]+)\]\s*\n+#table\(\s*\n\s*columns:\s*\d+,") {
-        result = re.replace_all(&result, |caps: &regex::Captures| {
-            let cols = caps.get(1).map_or("", |m| m.as_str().trim());
-            format!("#table(\n  columns: ({}),", cols)
-        }).to_string();
-    }
-    // Also handle [cols: X] shorthand
-    if let Ok(re) = Regex::new(r"(?i)\[cols:\s*([^\]]+)\]\s*\n+#table\(\s*\n\s*columns:\s*\d+,") {
-        result = re.replace_all(&result, |caps: &regex::Captures| {
-            let cols = caps.get(1).map_or("", |m| m.as_str().trim());
-            format!("#table(\n  columns: ({}),", cols)
-        }).to_string();
-    }
+	// Handle table-columns directive: [table-columns: X] followed by #table(
+	// This finds the directive, captures the column spec, and applies it to the next table
+	if let Ok(re) = Regex::new(r"(?i)\[table-columns?:\s*([^\]]+)\]\s*\n+#table\(\s*\n\s*columns:\s*\d+,") {
+		result = re
+			.replace_all(&result, |caps: &regex::Captures| {
+				let cols = caps.get(1).map_or("", |m| m.as_str().trim());
+				format!("#table(\n  columns: ({}),", cols)
+			})
+			.to_string();
+	}
+	// Also handle [cols: X] shorthand
+	if let Ok(re) = Regex::new(r"(?i)\[cols:\s*([^\]]+)\]\s*\n+#table\(\s*\n\s*columns:\s*\d+,") {
+		result = re
+			.replace_all(&result, |caps: &regex::Captures| {
+				let cols = caps.get(1).map_or("", |m| m.as_str().trim());
+				format!("#table(\n  columns: ({}),", cols)
+			})
+			.to_string();
+	}
 
-    // Handle remote images - Typst can't load from URLs
-    // For now, convert remote image references to placeholder text
-    if let Ok(re) = Regex::new(r#"#figure\(image\("https?://[^"]+"\)[^)]*\)"#) {
-        result = re
-            .replace_all(&result, "[Remote image not supported]")
-            .to_string();
-    }
-    if let Ok(re) = Regex::new(r#"#image\("https?://[^"]+"\)"#) {
-        result = re
-            .replace_all(&result, "[Remote image not supported]")
-            .to_string();
-    }
+	// Handle remote images - Typst can't load from URLs
+	// For now, convert remote image references to placeholder text
+	if let Ok(re) = Regex::new(r#"#figure\(image\("https?://[^"]+"\)[^)]*\)"#) {
+		result = re.replace_all(&result, "[Remote image not supported]").to_string();
+	}
+	if let Ok(re) = Regex::new(r#"#image\("https?://[^"]+"\)"#) {
+		result = re.replace_all(&result, "[Remote image not supported]").to_string();
+	}
 
-    result
+	result
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::parser::markdown::parse_markdown;
+	use super::*;
+	use crate::parser::markdown::parse_markdown;
 
-    #[test]
-    fn test_heading_conversion() {
-        let content = "# Heading 1\n\n## Heading 2\n\n### Heading 3";
-        let doc = parse_markdown(content).unwrap();
-        let metadata = DocumentMetadata::default();
-        let typst = convert_to_typst(&doc, &metadata).unwrap();
+	#[test]
+	fn test_heading_conversion() {
+		let content = "# Heading 1\n\n## Heading 2\n\n### Heading 3";
+		let doc = parse_markdown(content).unwrap();
+		let metadata = DocumentMetadata::default();
+		let typst = convert_to_typst(&doc, &metadata).unwrap();
 
-        assert!(typst.contains("= Heading 1"));
-        assert!(typst.contains("== Heading 2"));
-        assert!(typst.contains("=== Heading 3"));
-    }
+		assert!(typst.contains("= Heading 1"));
+		assert!(typst.contains("== Heading 2"));
+		assert!(typst.contains("=== Heading 3"));
+	}
 
-    #[test]
-    fn test_emphasis_conversion() {
-        let content = "This is *italic* and **bold** text.";
-        let doc = parse_markdown(content).unwrap();
-        let metadata = DocumentMetadata::default();
-        let typst = convert_to_typst(&doc, &metadata).unwrap();
+	#[test]
+	fn test_emphasis_conversion() {
+		let content = "This is *italic* and **bold** text.";
+		let doc = parse_markdown(content).unwrap();
+		let metadata = DocumentMetadata::default();
+		let typst = convert_to_typst(&doc, &metadata).unwrap();
 
-        assert!(typst.contains("_italic_"));
-        assert!(typst.contains("*bold*"));
-    }
+		assert!(typst.contains("_italic_"));
+		assert!(typst.contains("*bold*"));
+	}
 
-    #[test]
-    fn test_code_block_conversion() {
-        let content = "```rust\nfn main() {\n    println!(\"Hello\");\n}\n```";
-        let doc = parse_markdown(content).unwrap();
-        let metadata = DocumentMetadata::default();
-        let typst = convert_to_typst(&doc, &metadata).unwrap();
+	#[test]
+	fn test_code_block_conversion() {
+		let content = "```rust\nfn main() {\n    println!(\"Hello\");\n}\n```";
+		let doc = parse_markdown(content).unwrap();
+		let metadata = DocumentMetadata::default();
+		let typst = convert_to_typst(&doc, &metadata).unwrap();
 
-        assert!(typst.contains("```rust"));
-        assert!(typst.contains("fn main()"));
-    }
+		assert!(typst.contains("```rust"));
+		assert!(typst.contains("fn main()"));
+	}
 
-    #[test]
-    fn test_list_conversion() {
-        let content = "- Item 1\n- Item 2\n  - Nested item";
-        let doc = parse_markdown(content).unwrap();
-        let metadata = DocumentMetadata::default();
-        let typst = convert_to_typst(&doc, &metadata).unwrap();
+	#[test]
+	fn test_list_conversion() {
+		let content = "- Item 1\n- Item 2\n  - Nested item";
+		let doc = parse_markdown(content).unwrap();
+		let metadata = DocumentMetadata::default();
+		let typst = convert_to_typst(&doc, &metadata).unwrap();
 
-        assert!(typst.contains("- Item 1"));
-        assert!(typst.contains("- Item 2"));
-    }
+		assert!(typst.contains("- Item 1"));
+		assert!(typst.contains("- Item 2"));
+	}
 
-    #[test]
-    fn test_escape_special_chars() {
-        assert_eq!(escape_typst_text("Hello #world"), "Hello \\#world");
-        // Note: $ is intentionally NOT escaped to allow math mode ($...$)
-        assert_eq!(escape_typst_text("Price: $100"), "Price: $100");
-        assert_eq!(escape_typst_text("Email: @user"), "Email: \\@user");
-    }
+	#[test]
+	fn test_escape_special_chars() {
+		assert_eq!(escape_typst_text("Hello #world"), "Hello \\#world");
+		// Note: $ is intentionally NOT escaped to allow math mode ($...$)
+		assert_eq!(escape_typst_text("Price: $100"), "Price: $100");
+		assert_eq!(escape_typst_text("Email: @user"), "Email: \\@user");
+	}
 
-    #[test]
-    fn test_link_conversion() {
-        let content = "[Link text](https://example.com)";
-        let doc = parse_markdown(content).unwrap();
-        let metadata = DocumentMetadata::default();
-        let typst = convert_to_typst(&doc, &metadata).unwrap();
+	#[test]
+	fn test_link_conversion() {
+		let content = "[Link text](https://example.com)";
+		let doc = parse_markdown(content).unwrap();
+		let metadata = DocumentMetadata::default();
+		let typst = convert_to_typst(&doc, &metadata).unwrap();
 
-        assert!(typst.contains("#link(\"https://example.com\")[Link text]"));
-    }
+		assert!(typst.contains("#link(\"https://example.com\")[Link text]"));
+	}
 }
