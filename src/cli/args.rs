@@ -17,8 +17,8 @@ use crate::parser::frontmatter::{Margins, parse_margins};
 ))]
 pub struct Args {
 	/// Input markdown file
-	#[arg(value_name = "MD_FILE")]
-	pub input: PathBuf,
+	#[arg(value_name = "MD_FILE", required_unless_present = "readme")]
+	pub input: Option<PathBuf>,
 
 	/// Output PDF file [default: MD_FILE with .pdf extension]
 	#[arg(short, long, value_name = "PDF_FILE")]
@@ -79,6 +79,10 @@ pub struct Args {
 	/// Disable page numbers
 	#[arg(long)]
 	pub no_page_numbers: bool,
+
+	/// Output readme file from repo
+	#[arg(short, long)]
+	pub readme: bool,
 
 	/// Enable verbose output
 	#[arg(short, long)]

@@ -1,5 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
+use std::path::Path;
 use tracing::{Level, debug, warn};
 use tracing_subscriber::FmtSubscriber;
 
@@ -12,6 +13,10 @@ use cli::Args;
 
 fn main() -> Result<()> {
 	let args = Args::parse();
+	if args.readme {
+		print!("{}", include_str!("../README.md"));
+		return Ok(());
+	}
 
 	// Set up logging
 	let log_level = if args.verbose { Level::DEBUG } else { Level::INFO };
@@ -20,8 +25,9 @@ fn main() -> Result<()> {
 	debug!("mdtopdf - Convert Markdown to PDF with Typst");
 
 	// Read the input file
-	let content = cli::read_input_file(&args.input)?;
-	debug!("Read {} bytes from {:?}", content.len(), args.input);
+	let input = args.input.as_ref().expect("MD_FILE required");
+	let content = cli::read_input_file(input)?;
+	debug!("Read {} bytes from {:?}", content.len(), input);
 
 	// Parse frontmatter and markdown
 	let (mut metadata, markdown_content) = parser::frontmatter::extract_frontmatter(&content)?;
@@ -37,14 +43,14 @@ fn main() -> Result<()> {
 		metadata.toc_header = Some(header.clone());
 	}
 
-	debug!("Parsed frontmatter: {:?}", metadata);
+	debug!("Parsed frontmatter and CLI: {:?}", metadata);
 
 	// Parse markdown and extract directives
 	let document = parser::markdown::parse_markdown(&markdown_content)?;
 	debug!("Parsed {} markdown events", document.events.len());
 
 	// Set up mermaid cache directory in the source file's parent directory
-	let base_path = args.input.parent().map(|p| p.to_path_buf());
+	let base_path = input.parent().map(Path::to_path_buf);
 	let mermaid_cache_dir = base_path.as_ref().map(|p| p.join(".mermaid"));
 
 	// Create mermaid cache directory if needed
@@ -60,7 +66,7 @@ fn main() -> Result<()> {
 
 	// Determine output path
 	let output_path = args.output.unwrap_or_else(|| {
-		let mut path = args.input.clone();
+		let mut path = input.clone();
 		path.set_extension("pdf");
 		path
 	});
