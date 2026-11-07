@@ -5,7 +5,7 @@
 [![license](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/pepa65/mdtopdf/blob/main/LICENSE)
 [![downloads](https://img.shields.io/crates/d/mdtopdf.svg)](https://crates.io/crates/mdtopdf)
 
-# mdtopdf 0.2.0
+# mdtopdf 0.2.1
 **Convert Markdown to PDF with Typst**
 
 A fast, lightweight Markdown-to-PDF converter written in Rust. Uses [Typst](https://typst.app/) as the PDF generation engine, so no dependencies on Chromium, Node.js or Pandoc. You're basically leveraging the amazingly rich and capable Typst engine to build your PDF documents by using Markdown enhanced with some Typst-style directives.
@@ -140,7 +140,7 @@ flowchart LR
 ## Usage
 ### Help text
 ```
-mdtopdf 0.2.0 - Convert Markdown to PDF with Typst
+mdtopdf 0.2.1 - Convert Markdown to PDF with Typst
 Usage: mdtopdf [OPTIONS] <MD_FILE>
 Arguments:
   <MD_FILE>  Input markdown file
@@ -190,7 +190,7 @@ mdtopdf document.md -v  # Also retains `document.typ`
 ## Installing
 ### Download static single-binary
 ```
-wget https://github.com/pepa65/mdtopdf/releases/download/0.2.0/mdtopdf
+wget https://github.com/pepa65/mdtopdf/releases/download/0.2.1/mdtopdf
 sudo mv mdtopdf /usr/local/bin
 sudo chown root:root /usr/local/bin/mdtopdf
 sudo chmod +x /usr/local/bin/mdtopdf
