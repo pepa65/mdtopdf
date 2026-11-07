@@ -2,7 +2,7 @@
 [![build](https://github.com/pepa65/mdtopdf/actions/workflows/rust.yml/badge.svg)](https://github.com/pepa65/mdtopdf/actions/workflows/rust.yml)
 [![dependencies](https://deps.rs/repo/github/pepa65/mdtopdf/status.svg)](https://deps.rs/repo/github/pepa65/mdtopdf)
 [![docs](https://img.shields.io/badge/docs-mdtopdf-blue.svg)](https://docs.rs/crate/mdtopdf/latest)
-[![license](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://github.com/pepa65/mdtopdf/blob/main/LICENSE)
+[![license](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/pepa65/mdtopdf/blob/main/LICENSE)
 [![downloads](https://img.shields.io/crates/d/mdtopdf.svg)](https://crates.io/crates/mdtopdf)
 
 # mdtopdf 0.2.0
