@@ -161,6 +161,7 @@ Options:
       --footer-center <FOOTER_CENTER>  Footer Center text
       --footer-right <FOOTER_RIGHT>    Footer Right text
       --no-page-numbers                Disable page numbers
+  -r, --readme                         Output readme file from repo
   -v, --verbose                        Enable verbose output
   -h, --help                           Print help
   -V, --version                        Print version
