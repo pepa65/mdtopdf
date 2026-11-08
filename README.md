@@ -90,7 +90,8 @@ footer-center: Page {page}
 
 ### Layout Directives
 Control document layout with special directives:
-* `[line-break]`/`[nl]`: Force line break () [Using `\` always breaks to the start of the new line]
+* `[line-break]`/`[nl]`: Force (justified) line break
+  [instead, using `\` always breaks to the start of the new line]
 * `[page-break]`: Force page break
 * `[columns-2]`: Start 2-column layout
 * `[columns-3]`: Start 3-column layout
