@@ -208,12 +208,13 @@ impl World for Md2PdfWorld {
 	}
 
 	fn today(&self, offset: Option<typst::foundations::Duration>) -> Option<Datetime> {
-		use chrono::{Datelike, Utc};
+		use jiff::{SignedDuration, Timestamp, tz::TimeZone};
 
 		let seconds = offset.map_or(0.0, |d| d.seconds());
-		let datetime = Utc::now() + chrono::Duration::seconds(seconds as i64);
+		let timestamp = Timestamp::now().checked_add(SignedDuration::from_secs(seconds as i64)).ok()?;
+		let date = timestamp.to_zoned(TimeZone::UTC).date();
 
-		Datetime::from_ymd(datetime.year(), datetime.month().try_into().ok()?, datetime.day().try_into().ok()?)
+		Datetime::from_ymd(date.year().into(), date.month().try_into().ok()?, date.day().try_into().ok()?)
 	}
 }
 
