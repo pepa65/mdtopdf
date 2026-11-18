@@ -212,7 +212,7 @@ impl World for Md2PdfWorld {
 
 		let seconds = offset.map_or(0.0, |d| d.seconds());
 		let timestamp = Timestamp::now().checked_add(SignedDuration::from_secs(seconds as i64)).ok()?;
-		let date = timestamp.to_zoned(TimeZone::UTC).date();
+		let date = timestamp.to_zoned_datetime(TimeZone::UTC).date();
 
 		Datetime::from_ymd(date.year().into(), date.month().try_into().ok()?, date.day().try_into().ok()?)
 	}
