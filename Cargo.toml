@@ -23,7 +23,7 @@ pkg-url = "{repo}/releases/download/{version}/{name}"
 clap = { version = "4", features = ["derive"] }
 
 # Markdown parsing
-pulldown-cmark = "0.13"
+pulldown-cmark = { version = "0.13", default-features = false }
 
 # YAML frontmatter parsing
 serde = { version = "1", features = ["derive"] }
@@ -45,7 +45,7 @@ typst = "0.15"
 typst-pdf = "0.15"
 typst-syntax = "0.15"
 typst-assets = { version = "0.15", features = ["fonts"] }
-comemo = "0.5"
+comemo = { version = "0.5", default-features = false }
 
 # Pattern matching
 regex = "1"
@@ -63,7 +63,7 @@ openssl-sys = { version = "0.9", features = ["vendored"] }
 
 # Archive extraction for Typst packages
 flate2 = "1"
-tar = "0.4"
+tar = { version = "0.4", default-features = false }
 
 # Directory utilities
 dirs = "7"
