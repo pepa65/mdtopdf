@@ -43,6 +43,10 @@ fn main() -> Result<()> {
 		metadata.toc_header = Some(header.clone());
 	}
 
+	if let Some(paper) = args.paper {
+		metadata.paper = Some(paper);
+	}
+
 	debug!("Parsed frontmatter and CLI: {:?}", metadata);
 
 	// Parse markdown and extract directives

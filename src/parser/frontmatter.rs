@@ -28,7 +28,7 @@ pub struct DocumentMetadata {
 	#[serde(rename = "font-size")]
 	pub font_size: Option<f32>,
 
-	/// Paper format (A4, Letter)
+	/// Paper format (a4, letter, a4l, letterl, or WIDTHxHEIGHT[UNIT])
 	pub paper: Option<String>,
 
 	/// The page margins (default: 16 mm)

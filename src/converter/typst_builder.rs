@@ -94,13 +94,13 @@ impl TypstBuilder {
 	}
 
 	/// Generate the document preamble with metadata
-	fn generate_preamble(&mut self, metadata: &DocumentMetadata) {
+	fn generate_preamble(&mut self, metadata: &DocumentMetadata) -> Result<()> {
 		// Page setup
 		let title = metadata.title.as_deref().unwrap_or("");
 
 		let author = metadata.author.as_deref().unwrap_or("");
 
-		let paper = metadata.paper.as_ref().map(|s| s.to_lowercase()).unwrap_or_else(|| "a4".to_string());
+		let paper_settings = paper_settings(metadata.paper.as_deref().unwrap_or("a4"))?;
 
 		let font = metadata.font.as_deref().unwrap_or("Arial");
 
@@ -118,10 +118,10 @@ impl TypstBuilder {
   author: ("{}"),
 )
 #set page(
-  paper: "{}",
+{paper_settings}
   margin: (top: {}{}, right: {}{}, bottom: {}{}, left: {}{}),
 "#,
-			title, author, paper, top, unit, right, unit, bottom, unit, left, unit,
+			title, author, top, unit, right, unit, bottom, unit, left, unit,
 		));
 
 		// Header configuration
@@ -210,6 +210,8 @@ impl TypstBuilder {
 
 		// Add callout helper function
 		self.output.push_str(callouts::callout_preamble());
+
+		Ok(())
 	}
 
 	/// Process a markdown event
@@ -539,6 +541,36 @@ fn escape_typst_text(text: &str) -> String {
 	result
 }
 
+fn paper_settings(paper: &str) -> Result<String> {
+	let normalized = paper.to_ascii_lowercase();
+	if let Some((width, height)) = normalized.split_once('x')
+		&& width.starts_with(|c: char| c.is_ascii_digit() || matches!(c, '.' | '+' | '-'))
+	{
+		let unit = ["mm", "cm", "in", "pt"].into_iter().find(|unit| height.ends_with(unit));
+		let height = unit.and_then(|unit| height.strip_suffix(unit)).unwrap_or(height);
+		let unit = unit.unwrap_or("mm");
+		let (Some(width), Some(height)) = (parse_paper_dimension(width), parse_paper_dimension(height)) else {
+			anyhow::bail!("Invalid paper size {paper:?}. Use positive decimal dimensions as WIDTHxHEIGHT followed by mm, cm, in, or pt.");
+		};
+		return Ok(format!("  width: {width}{unit},\n  height: {height}{unit},"));
+	}
+
+	let (name, landscape) = match normalized.as_str() {
+		"a4l" => ("a4", true),
+		"letterl" => ("us-letter", true),
+		"letter" => ("us-letter", false),
+		name => (name, false),
+	};
+	Ok(format!("  paper: {name:?},\n  flipped: {landscape},"))
+}
+
+fn parse_paper_dimension(value: &str) -> Option<f64> {
+	if !value.bytes().all(|byte| byte.is_ascii_digit() || byte == b'.') {
+		return None;
+	}
+	value.parse::<f64>().ok().filter(|value| value.is_finite() && *value > 0.0)
+}
+
 #[cfg(test)]
 pub fn convert_to_typst(doc: &ParsedDocument, metadata: &DocumentMetadata) -> Result<String> {
 	convert_to_typst_with_cache(doc, metadata, None)
@@ -562,7 +594,7 @@ pub fn convert_to_typst_with_cache(doc: &ParsedDocument, metadata: &DocumentMeta
 	}
 
 	// Generate preamble with metadata
-	builder.generate_preamble(metadata);
+	builder.generate_preamble(metadata)?;
 
 	// Process all events
 	for event in &doc.events {

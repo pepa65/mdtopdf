@@ -32,9 +32,10 @@ pub struct Args {
 	#[arg(short = 's', long, default_value = "11")]
 	pub font_size: f32,
 
-	/// Paper format (A4/Letter)
-	#[arg(short, long, default_value = "A4")]
-	pub paper: String,
+	/// Paper format (a4, letter, a4l, letterl, or WIDTHxHEIGHT[UNIT]) [default: a4]
+	/// UNIT is 'mm' by default and also accepts 'cm', 'in', and 'pt'.
+	#[arg(short, long, alias = "format")]
+	pub paper: Option<String>,
 
 	/// Page margins: `top [right [bottom [left]]] [mm|cm|in|pt]` [default: 16 mm]
 	#[arg(short = 'm', long = "margins", num_args = 1..=5)]

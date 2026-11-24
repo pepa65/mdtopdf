@@ -39,6 +39,7 @@ A fast, lightweight Markdown-to-PDF converter written in Rust. Uses [Typst](http
   - organization: ORGANIZATION
   - font: NAME
   - font-size: SIZE (can be fractional)
+  - paper: `a4` | `letter` | `a4l` | `letterl` | `WIDTHxHEIGHT[UNIT]` (default: `a4`)
   - margins: TOP [RIGHT [BOTTOM [LEFT]]] [`mm`|`cm`|`in`|`pt`] (default: 16 mm)
     * Only TOP: value for all margins
     * TOP and RIGHT: BOTTOM same as TOP, LEFT same as RIGHT
@@ -64,7 +65,7 @@ A fast, lightweight Markdown-to-PDF converter written in Rust. Uses [Typst](http
 * Table of contents: `--toc`
 * Headers: `--header-left HEADER_LEFT, `--header-center` HEADER_CENTER, `--header-right` HEADER_RIGHT
 * Footers: `--footer-left` FOOTER_LEFT, `--footer-center` FOOTER_CENTER, `--footer-right` FOOTER_RIGHT
-* Configurable font and paper size: `--font` NAME, `--font-size` SIZE, `--format` `A4`|`Letter`
+* Configurable font and paper size: `--font` NAME, `--font-size` SIZE, `--paper` `a4` | `letter` | `a4l` | `letterl` (the `l` suffix selects landscape). Custom sizes such as `8.5x11in` accept decimal dimensions and use `mm` by default. Supported units are `mm`, `cm`, `in`, and `pt`.
 * Page numbering: `--no-page-numbers` [default is page numbers]
 * Output filename: `-o`/`--output` FILENAME
 * Timeout: `--timeout` SECONDS
@@ -150,7 +151,7 @@ Options:
   -o, --output <PDF_FILE>              Output PDF file [default: MD_FILE with .pdf extension]
   -f, --font <FONT>                    Font family to use [default: Inter]
   -s, --font-size <FONT_SIZE>          Font size in points (can be fractional) [default: 11]
-  -p, --paper <PAPER>                  Paper format (A4/Letter) [default: A4]
+  -p, --paper <PAPER>                  Paper format (a4, letter, a4l, letterl, or WIDTHxHEIGHT[UNIT]) [default: a4]
   -m, --margins <MARGINS>...           Page margins: `top [right [bottom [left]]] [mm|cm|in|pt]` [default: 16 mm]
       --toc                            Generate Table of Contents
       --toc-header                     Header for Table of Contents
@@ -180,7 +181,7 @@ mdtopdf document.md -o output.pdf
 mdtopdf report.md --toc --cover
 
 # Custom font and paper size
-mdtopdf document.md --font "Fira Sans" --font-size 12 --format Letter
+mdtopdf document.md --font "Fira Sans" --font-size 12 --paper letterl
 
 # Add some header and footer elements
 mdtopdf document.md --header-left "My Document" --footer-center "{page}"
